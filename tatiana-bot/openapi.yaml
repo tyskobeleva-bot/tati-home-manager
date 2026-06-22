@@ -1,0 +1,75 @@
+openapi: 3.1.0
+info:
+  title: Tatiana VkusVill Cart Action
+  version: 1.0.0
+  description: API action for ChatGPT Project. Creates a VkusVill cart link from an approved shopping list.
+servers:
+  - url: https://YOUR-PUBLIC-ACTION-URL
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  service:
+                    type: string
+  /create-vkusvill-cart:
+    post:
+      operationId: createVkusvillCart
+      summary: Create a VkusVill cart link from a shopping list
+      description: Use when the user says to collect/build/create the VkusVill basket after menu and shopping list are approved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shopping_list_text:
+                  type: string
+                  description: Approved shopping list as plain Russian text.
+                items:
+                  type: array
+                  description: Structured shopping list if available.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      quantity:
+                        type: string
+                      notes:
+                        type: string
+                    required:
+                      - name
+      responses:
+        '200':
+          description: Cart creation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  text:
+                    type: string
+                  cart_link:
+                    type: string
+                  added_items:
+                    type: array
+                    items:
+                      type: string
+                  not_found:
+                    type: array
+                    items:
+                      type: string
