@@ -1,74 +1,76 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from typing import List, Optional
 
-from . import state as state_store
-from .agent import handle_user_message
-from .config import ALLOWED_TELEGRAM_CHAT_ID, PUBLIC_BASE_URL, TELEGRAM_BOT_TOKEN, OPENAI_API_KEY
-from .telegram import send_message, set_webhook
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+from .config import VKUSVILL_MCP_URL
 from .vkusvill import create_cart_from_text
 
-app = FastAPI(title="Tatiana Bot")
+app = FastAPI(
+    title="Tatiana VkusVill Cart Action",
+    description="ChatGPT Action API: creates a VkusVill cart link from an approved shopping list.",
+    version="1.0.0",
+)
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    state_store.init_db()
+class ShoppingItem(BaseModel):
+    name: str = Field(..., description="Product name in Russian, for example: яйца, кабачки, брокколи")
+    quantity: Optional[str] = Field(None, description="Human quantity, for example: 1 упаковка, 1 кг, 2 штуки")
+    notes: Optional[str] = Field(None, description="Optional constraints or replacement notes")
+
+
+class CreateCartRequest(BaseModel):
+    shopping_list_text: Optional[str] = Field(
+        None,
+        description="Approved shopping list as plain Russian text. Use this when ChatGPT already has a formatted list.",
+    )
+    items: Optional[List[ShoppingItem]] = Field(
+        None,
+        description="Structured shopping list. Use this when items are available as objects.",
+    )
+
+
+class CreateCartResponse(BaseModel):
+    ok: bool
+    text: str
+    cart_link: Optional[str] = None
+    added_items: List[str] = []
+    not_found: List[str] = []
+
+
+def _items_to_text(items: Optional[List[ShoppingItem]]) -> str:
+    if not items:
+        return ""
+    lines = []
+    for item in items:
+        line = item.name
+        if item.quantity:
+            line += f" — {item.quantity}"
+        if item.notes:
+            line += f" ({item.notes})"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {
-        "ok": bool(TELEGRAM_BOT_TOKEN and OPENAI_API_KEY),
-        "telegram_token": bool(TELEGRAM_BOT_TOKEN),
-        "openai_key": bool(OPENAI_API_KEY),
-    }
+    return {"ok": True, "service": "tatiana-vkusvill-cart-action", "mcp_url": VKUSVILL_MCP_URL}
 
 
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request) -> JSONResponse:
-    update = await request.json()
-    message = update.get("message") or update.get("edited_message") or {}
-    chat = message.get("chat") or {}
-    chat_id = str(chat.get("id") or "")
-    text = (message.get("text") or "").strip()
+@app.post("/create-vkusvill-cart", response_model=CreateCartResponse)
+async def create_vkusvill_cart(payload: CreateCartRequest) -> CreateCartResponse:
+    shopping_text = (payload.shopping_list_text or "").strip() or _items_to_text(payload.items)
+    if not shopping_text:
+        return CreateCartResponse(
+            ok=False,
+            text="Нет списка покупок. Сначала утверди меню и список продуктов, потом вызывай создание корзины.",
+        )
 
-    if not chat_id or not text:
-        return JSONResponse({"ok": True, "ignored": True})
-    if ALLOWED_TELEGRAM_CHAT_ID and chat_id != ALLOWED_TELEGRAM_CHAT_ID:
-        await send_message(chat_id, "Этот бот закрыт для личного использования.")
-        return JSONResponse({"ok": True, "blocked": True})
-
-    if text.lower() in {"/reset", "reset", "сброс"}:
-        state_store.clear_state(chat_id)
-        await send_message(chat_id, "Состояние сброшено. Можно начать заново.")
-        return JSONResponse({"ok": True})
-
-    saved = state_store.get_state(chat_id)
-    try:
-        agent_result = await handle_user_message(text, saved)
-        new_state = agent_result.get("state") or saved
-        action = agent_result.get("action")
-        if action == "create_cart":
-            shopping_list_text = agent_result.get("shopping_list_text") or ""
-            if not shopping_list_text:
-                reply = agent_result.get("reply") or "Нет списка покупок. Пришли меню или список продуктов."
-            else:
-                await send_message(chat_id, "Собираю корзину ВкусВилла…")
-                cart = await create_cart_from_text(shopping_list_text)
-                reply = cart.get("text") or "Корзина обработана, но текст ответа не сформирован."
-                new_state["status"] = "cart_created" if cart.get("ok") else new_state.get("status", "cart_ready")
-        else:
-            reply = agent_result.get("reply") or "Не смогла сформировать ответ."
-        state_store.save_state(chat_id, new_state)
-        await send_message(chat_id, reply)
-        return JSONResponse({"ok": True, "action": action})
-    except Exception as e:
-        await send_message(chat_id, f"Ошибка: {type(e).__name__}: {e}")
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-
-@app.post("/setup-webhook")
-async def setup_webhook() -> dict:
-    if not PUBLIC_BASE_URL:
-        raise HTTPException(status_code=400, detail="PUBLIC_BASE_URL is not configured")
-    return await set_webhook(PUBLIC_BASE_URL)
+    result = await create_cart_from_text(shopping_text)
+    return CreateCartResponse(
+        ok=bool(result.get("ok")),
+        text=result.get("text") or "Корзина обработана, но текст ответа не сформирован.",
+        cart_link=result.get("cart_link"),
+        added_items=result.get("added_items") or [],
+        not_found=result.get("not_found") or [],
+    )
