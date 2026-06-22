@@ -1,24 +1,99 @@
-# Tatiana Bot
+# Tatiana VkusVill Cart Action
 
-Личный Telegram-бот для семейного питания.
+Это не Telegram-бот.
 
-## Что умеет
+Это технический API-модуль для ChatGPT Project: ты обсуждаешь меню прямо в ChatGPT, а когда говоришь «собирай корзину», ChatGPT вызывает этот API и получает ссылку на корзину ВкусВилла.
 
-- ведёт диалог про меню;
-- помнит последнее меню и список покупок;
-- принимает правки;
-- по команде «собирай корзину» создаёт корзину ВкусВилла;
-- возвращает ссылку в Telegram.
-
-## Архитектура
+## Целевой сценарий
 
 ```text
-Telegram → FastAPI backend → OpenAI agent → SQLite state
-                               ↓
-                         VkusVill MCP → cart link
+Татьяна в ChatGPT Project:
+Составь меню на 3 дня. Дома рис, яйца, лосось.
+
+ChatGPT:
+Меню + список покупок.
+
+Татьяна:
+Собирай корзину.
+
+ChatGPT → Action API:
+POST /create-vkusvill-cart
+
+Action API → VkusVill MCP:
+создаёт корзину.
+
+ChatGPT:
+Ссылка на корзину: https://vkusvill.ru/?share_basket=...
 ```
 
-## Быстрый запуск локально
+## Что делает этот сервис
+
+- принимает утверждённый список покупок;
+- ищет товары во ВкусВилле;
+- собирает уникальные `xml_id`;
+- вызывает `vkusvill_cart_link_create`;
+- возвращает ссылку, добавленные товары и ненайденные позиции.
+
+## Что НЕ делает этот сервис
+
+- не ведёт диалог;
+- не составляет меню;
+- не хранит семейную память;
+- не работает через Telegram;
+- не использует OpenAI API.
+
+Всё мышление и обсуждение меню остаётся в ChatGPT Project.
+
+## API
+
+### Health
+
+```http
+GET /health
+```
+
+### Создать корзину
+
+```http
+POST /create-vkusvill-cart
+Content-Type: application/json
+```
+
+Пример:
+
+```json
+{
+  "shopping_list_text": "Яйца — 1 упаковка\nКабачки — 1 кг\nБрокколи — 1 упаковка"
+}
+```
+
+Ответ:
+
+```json
+{
+  "ok": true,
+  "text": "Ссылка на корзину:\nhttps://vkusvill.ru/?share_basket=...",
+  "cart_link": "https://vkusvill.ru/?share_basket=...",
+  "added_items": ["Яйца — 1", "Кабачки — 1"],
+  "not_found": []
+}
+```
+
+## OpenAPI для ChatGPT Actions
+
+Файл:
+
+```text
+openapi.yaml
+```
+
+В нём описан endpoint:
+
+```text
+/create-vkusvill-cart
+```
+
+## Локальный запуск для теста
 
 ```bash
 cd tatiana-bot
@@ -29,69 +104,16 @@ cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Заполни `.env`:
+`.env`:
 
 ```env
-TELEGRAM_BOT_TOKEN=...
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-4.1-mini
 VKUSVILL_MCP_URL=https://mcp001.vkusvill.ru/mcp
-PUBLIC_BASE_URL=https://your-public-url
-ALLOWED_TELEGRAM_CHAT_ID=
 ```
 
-`ALLOWED_TELEGRAM_CHAT_ID` можно оставить пустым на тесте. Потом лучше поставить свой chat_id.
-
-## Webhook Telegram
-
-После деплоя вызови:
+## Проверка
 
 ```bash
-curl -X POST https://your-service.example.com/setup-webhook
+curl -X POST http://localhost:8000/create-vkusvill-cart \
+  -H "Content-Type: application/json" \
+  -d '{"shopping_list_text":"Яйца — 1 упаковка\nКабачки — 1 кг"}'
 ```
-
-## Команды в боте
-
-Сброс памяти:
-
-```text
-/reset
-```
-
-Обычный сценарий:
-
-```text
-Составь меню на 3 дня. Повар завтра 3 часа. Дома рис, яйца, лосось.
-```
-
-Правка:
-
-```text
-Убери печень, добавь суп, рис уже есть.
-```
-
-Корзина:
-
-```text
-Собирай корзину
-```
-
-Или прямой список:
-
-```text
-Собери корзину: яйца — 1 упаковка, картофель — 1 кг, борщ — 2 упаковки
-```
-
-## Деплой на Render
-
-1. Создай Web Service.
-2. Подключи GitHub repository.
-3. Root Directory: `tatiana-bot`.
-4. Environment: Docker.
-5. Add Environment Variables из `.env.example`.
-6. Deploy.
-7. После deploy выполни POST `/setup-webhook`.
-
-## Важное про ВкусВилл
-
-ВкусВилл пересчитывает наличие после выбора адреса доставки. Если товар исчез после выбора адреса, это не ошибка backend: нужно подобрать замену под конкретный адрес.
