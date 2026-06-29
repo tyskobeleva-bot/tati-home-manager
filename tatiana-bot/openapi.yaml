@@ -2,9 +2,9 @@ openapi: 3.1.0
 info:
   title: Tatiana VkusVill Cart Action
   version: 1.0.0
-  description: API action for ChatGPT Project. Creates a VkusVill cart link from an approved shopping list.
+  description: Creates a VkusVill cart link from an approved shopping list.
 servers:
-  - url: https://YOUR-PUBLIC-ACTION-URL
+  - url: https://tati-home-manager-production.up.railway.app
 paths:
   /health:
     get:
@@ -26,7 +26,6 @@ paths:
     post:
       operationId: createVkusvillCart
       summary: Create a VkusVill cart link from a shopping list
-      description: Use when the user says to collect/build/create the VkusVill basket after menu and shopping list are approved.
       requestBody:
         required: true
         content:
@@ -36,10 +35,8 @@ paths:
               properties:
                 shopping_list_text:
                   type: string
-                  description: Approved shopping list as plain Russian text.
                 items:
                   type: array
-                  description: Structured shopping list if available.
                   items:
                     type: object
                     properties:
