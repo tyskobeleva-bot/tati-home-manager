@@ -6,13 +6,20 @@ from .config import VKUSVILL_MCP_URL
 
 
 def _extract_jsonish(value: Any) -> Any:
-    """Best-effort conversion of MCP tool content to Python objects."""
-    if isinstance(value, (dict, list)):
-        return value
+    """Best-effort conversion of MCP tool content to Python objects.
+
+    MCP returns content as a list of TextContent-like objects. The first version
+    returned lists unchanged, so product search results were never parsed.
+    """
+    if isinstance(value, list):
+        parsed = [_extract_jsonish(x) for x in value]
+        if len(parsed) == 1:
+            return parsed[0]
+        return parsed
     if hasattr(value, "text"):
         value = value.text
-    if isinstance(value, list):
-        return [_extract_jsonish(x) for x in value]
+    if isinstance(value, dict):
+        return {k: _extract_jsonish(v) for k, v in value.items()}
     if not isinstance(value, str):
         return value
     text = value.strip()
@@ -26,20 +33,27 @@ def _find_items(obj: Any) -> List[Dict[str, Any]]:
     if isinstance(obj, list):
         result = []
         for x in obj:
-            if isinstance(x, dict) and ("xml_id" in x or "id" in x):
+            if isinstance(x, dict) and ("xml_id" in x or "xmlId" in x or "id" in x):
                 result.append(x)
             else:
                 result.extend(_find_items(x))
         return result
     if isinstance(obj, dict):
-        for key in ("items", "products", "result", "data", "goods"):
+        for key in ("items", "products", "result", "data", "goods", "records", "list"):
             if key in obj:
                 found = _find_items(obj[key])
                 if found:
                     return found
-        if "xml_id" in obj or "id" in obj:
+        if "xml_id" in obj or "xmlId" in obj or "id" in obj:
             return [obj]
     return []
+
+
+def _clean_search_name(line: str) -> str:
+    name = re.split(r"\s[—-]\s|:\s", line, maxsplit=1)[0].strip()
+    name = re.sub(r"\b(куриные|куриное|свежие|свежий|упаковка|штуки|штук|кг|грамм|г)\b", "", name, flags=re.I)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name or line.strip()
 
 
 async def _call_tool(session, name: str, arguments: Dict[str, Any]) -> Any:
@@ -68,7 +82,7 @@ async def create_cart_from_text(shopping_list_text: str) -> Dict[str, Any]:
         async with ClientSession(read, write) as session:
             await session.initialize()
             for line in lines[:20]:
-                name = re.split(r"\s[—-]\s|:\s", line, maxsplit=1)[0].strip()
+                name = _clean_search_name(line)
                 if not name:
                     continue
                 qty = _quantity_from_line(line)
